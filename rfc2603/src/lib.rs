@@ -661,6 +661,81 @@ pub fn push_disambiguator(dis: u64, output: &mut String) {
     push_opt_integer_62("s", dis, output);
 }
 
+/// Create a symbol generator that yields mangled symbols for a sequence of function names.
+///
+/// Returns an iterator that produces v0 mangled symbols for functions in the given crate.
+///
+/// # Examples
+///
+/// ```
+/// use rfc2603::create_symbol_iterator;
+///
+/// let symbols: Vec<String> = create_symbol_iterator("mycrate", &["foo", "bar", "baz"])
+///     .collect();
+///
+/// assert_eq!(symbols[0], "_RNvC7mycrate3foo");
+/// assert_eq!(symbols[1], "_RNvC7mycrate3bar");
+/// assert_eq!(symbols[2], "_RNvC7mycrate3baz");
+/// ```
+pub fn create_symbol_iterator<'a>(
+    crate_name: &'a str,
+    function_names: &'a [&'a str],
+) -> impl Iterator<Item = String> + 'a {
+    function_names.iter().map(move |&name| {
+        SymbolBuilder::new(crate_name)
+            .function(name)
+            .build()
+            .unwrap_or_else(|_| String::from("_RINVALID"))
+    })
+}
+
+/// Create a symbol formatter that can be displayed.
+///
+/// Returns a displayable type that formats a symbol with optional demangling information.
+///
+/// # Examples
+///
+/// ```
+/// use rfc2603::create_symbol_display;
+///
+/// let display = create_symbol_display("_RNvC7mycrate3foo", true);
+/// let output = format!("{}", display);
+/// assert!(output.contains("_RNvC7mycrate3foo"));
+/// ```
+pub fn create_symbol_display(symbol: &str, show_breakdown: bool) -> impl std::fmt::Display + '_ {
+    struct SymbolDisplay<'a> {
+        symbol: &'a str,
+        show_breakdown: bool,
+    }
+
+    impl std::fmt::Display for SymbolDisplay<'_> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "Symbol: {}", self.symbol)?;
+
+            if self.show_breakdown {
+                if self.symbol.starts_with("_R") {
+                    writeln!(f)?;
+                    write!(f, "  Format: v0 (Rust Symbol Mangling)")?;
+
+                    // Try to demangle if rustc-demangle is available
+                    #[cfg(test)]
+                    if let Ok(demangled) = rustc_demangle::try_demangle(self.symbol) {
+                        writeln!(f)?;
+                        write!(f, "  Demangled: {:#}", demangled)?;
+                    }
+                }
+            }
+
+            Ok(())
+        }
+    }
+
+    SymbolDisplay {
+        symbol,
+        show_breakdown,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1170,5 +1245,86 @@ mod tests {
         let mut output = String::new();
         push_ident("TYPE_MAX", &mut output);
         assert_eq!(output, "8TYPE_MAX");
+    }
+
+    // ========== Impl Trait Functions Tests ==========
+
+    #[test]
+    fn test_create_symbol_iterator() {
+        let symbols: Vec<String> = create_symbol_iterator("mycrate", &["foo", "bar", "baz"])
+            .collect();
+
+        assert_eq!(symbols.len(), 3);
+        assert_eq!(symbols[0], "_RNvC7mycrate3foo");
+        assert_eq!(symbols[1], "_RNvC7mycrate3bar");
+        assert_eq!(symbols[2], "_RNvC7mycrate3baz");
+    }
+
+    #[test]
+    fn test_create_symbol_iterator_empty() {
+        let symbols: Vec<String> = create_symbol_iterator("mycrate", &[])
+            .collect();
+
+        assert_eq!(symbols.len(), 0);
+    }
+
+    #[test]
+    fn test_create_symbol_iterator_single() {
+        let symbols: Vec<String> = create_symbol_iterator("std", &["main"])
+            .collect();
+
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0], "_RNvC3std4main");
+    }
+
+    #[test]
+    fn test_create_symbol_iterator_chain() {
+        // Test that the iterator can be chained with other iterator methods
+        let count = create_symbol_iterator("test", &["a", "b", "c", "d"])
+            .filter(|s| s.contains("test"))
+            .count();
+
+        assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn test_create_symbol_display_simple() {
+        let display = create_symbol_display("_RNvC7mycrate3foo", false);
+        let output = format!("{}", display);
+
+        assert!(output.contains("Symbol: "));
+        assert!(output.contains("_RNvC7mycrate3foo"));
+        assert!(!output.contains("Format:")); // No breakdown
+    }
+
+    #[test]
+    fn test_create_symbol_display_with_breakdown() {
+        let display = create_symbol_display("_RNvC7mycrate3foo", true);
+        let output = format!("{}", display);
+
+        assert!(output.contains("Symbol: "));
+        assert!(output.contains("_RNvC7mycrate3foo"));
+        assert!(output.contains("Format: v0 (Rust Symbol Mangling)"));
+    }
+
+    #[test]
+    fn test_create_symbol_display_non_v0() {
+        let display = create_symbol_display("some_other_symbol", true);
+        let output = format!("{}", display);
+
+        assert!(output.contains("Symbol: "));
+        assert!(output.contains("some_other_symbol"));
+        // Should not show v0 format info for non-v0 symbols
+        assert!(!output.contains("v0"));
+    }
+
+    #[test]
+    fn test_symbol_iterator_map_transform() {
+        // Test that the iterator works with transformations
+        let symbols: Vec<String> = create_symbol_iterator("crate", &["x", "y", "z"])
+            .map(|s| s.to_uppercase())
+            .collect();
+
+        assert!(symbols[0].starts_with("_RNVC"));
     }
 }
