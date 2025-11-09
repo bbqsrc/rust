@@ -214,27 +214,45 @@ impl V0SymbolMangler {
     /// Print a type using facet Shape
     /// Copied from rustc's print_type, adapted for facet
     pub fn print_type(&mut self, shape: &'static Shape) -> Result<(), PrintError> {
-        use facet::{Type, PrimitiveType, SequenceType, UserType, PointerType};
+        use facet::{Type, PrimitiveType, NumericType, TextualType, SequenceType, UserType, PointerType};
+
+        // Get the size from layout if available
+        let size = shape.layout.sized_layout().ok().map(|l| l.size());
 
         // Basic types, never cached (single-character).
         let basic_type = match shape.ty {
-            Type::Primitive(PrimitiveType::Bool) => "b",
-            Type::Primitive(PrimitiveType::Char) => "c",
-            Type::Primitive(PrimitiveType::Str) => "e",
-            Type::Primitive(PrimitiveType::I8) => "a",
-            Type::Primitive(PrimitiveType::I16) => "s",
-            Type::Primitive(PrimitiveType::I32) => "l",
-            Type::Primitive(PrimitiveType::I64) => "x",
-            Type::Primitive(PrimitiveType::I128) => "n",
-            Type::Primitive(PrimitiveType::Isize) => "i",
-            Type::Primitive(PrimitiveType::U8) => "h",
-            Type::Primitive(PrimitiveType::U16) => "t",
-            Type::Primitive(PrimitiveType::U32) => "m",
-            Type::Primitive(PrimitiveType::U64) => "y",
-            Type::Primitive(PrimitiveType::U128) => "o",
-            Type::Primitive(PrimitiveType::Usize) => "j",
-            Type::Primitive(PrimitiveType::F32) => "f",
-            Type::Primitive(PrimitiveType::F64) => "d",
+            Type::Primitive(PrimitiveType::Boolean) => "b",
+            Type::Primitive(PrimitiveType::Textual(TextualType::Char)) => "c",
+            Type::Primitive(PrimitiveType::Textual(TextualType::Str)) => "e",
+            Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: true })) => {
+                // Determine size from layout
+                match size {
+                    Some(1) => "a",   // i8
+                    Some(2) => "s",   // i16
+                    Some(4) => "l",   // i32
+                    Some(8) => "x",   // i64
+                    Some(16) => "n",  // i128
+                    _ => "i",         // isize (pointer-sized)
+                }
+            }
+            Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: false })) => {
+                // Determine size from layout
+                match size {
+                    Some(1) => "h",   // u8
+                    Some(2) => "t",   // u16
+                    Some(4) => "m",   // u32
+                    Some(8) => "y",   // u64
+                    Some(16) => "o",  // u128
+                    _ => "j",         // usize (pointer-sized)
+                }
+            }
+            Type::Primitive(PrimitiveType::Numeric(NumericType::Float)) => {
+                match size {
+                    Some(4) => "f",   // f32
+                    Some(8) => "d",   // f64
+                    _ => "",          // f16/f128 not yet handled
+                }
+            }
             Type::Primitive(PrimitiveType::Never) => "z",
             // Unit type (empty tuple)
             Type::User(UserType::Struct(struct_type)) if struct_type.fields.is_empty() => "u",
@@ -256,17 +274,17 @@ impl V0SymbolMangler {
 
         // Complex types
         match shape.ty {
-            Type::Pointer(PointerType::Ref(ref_type)) => {
-                self.push(if ref_type.is_mut { "Q" } else { "R" });
+            Type::Pointer(PointerType::Reference(ref_type)) => {
+                self.push(if ref_type.mutable { "Q" } else { "R" });
                 // Lifetime (simplified - facet doesn't track lifetimes in the same way)
                 // We'd need additional metadata for full lifetime support
                 // For now, assume erased lifetime
-                self.print_type(ref_type.inner)?;
+                self.print_type(ref_type.target)?;
             }
 
-            Type::Pointer(PointerType::RawPtr(ptr_type)) => {
-                self.push(if ptr_type.is_mut { "O" } else { "P" });
-                self.print_type(ptr_type.inner)?;
+            Type::Pointer(PointerType::Raw(ptr_type)) => {
+                self.push(if ptr_type.mutable { "O" } else { "P" });
+                self.print_type(ptr_type.target)?;
             }
 
             Type::Sequence(SequenceType::Array(array_type)) => {
@@ -284,7 +302,7 @@ impl V0SymbolMangler {
             Type::User(UserType::Struct(struct_type)) if matches!(struct_type.kind, facet::StructKind::Tuple) => {
                 self.push("T");
                 for field in struct_type.fields {
-                    self.print_type(field.shape)?;
+                    self.print_type(field.shape())?;
                 }
                 self.push("E");
             }
