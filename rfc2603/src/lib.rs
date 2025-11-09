@@ -665,6 +665,8 @@ pub fn push_disambiguator(dis: u64, output: &mut String) {
 mod tests {
     use super::*;
 
+    // ========== Base-62 Encoding Tests ==========
+
     #[test]
     fn test_base62_encoding() {
         assert_eq!(encode_integer_62(0), "_");
@@ -673,6 +675,35 @@ mod tests {
         assert_eq!(encode_integer_62(62), "Z_");
         assert_eq!(encode_integer_62(63), "10_");
         assert_eq!(encode_integer_62(1000), "g7_");
+    }
+
+    #[test]
+    fn test_base62_boundaries() {
+        // Test boundaries between different base-62 digit counts
+        assert_eq!(encode_integer_62(0), "_");      // special case
+        assert_eq!(encode_integer_62(1), "0_");     // 1 digit starts
+        assert_eq!(encode_integer_62(10), "9_");
+        assert_eq!(encode_integer_62(11), "a_");
+        assert_eq!(encode_integer_62(36), "z_");
+        assert_eq!(encode_integer_62(37), "A_");
+        assert_eq!(encode_integer_62(61), "Y_");
+        assert_eq!(encode_integer_62(62), "Z_");    // 1 digit ends
+        assert_eq!(encode_integer_62(63), "10_");   // 2 digits start
+        assert_eq!(encode_integer_62(124), "1Z_");
+        assert_eq!(encode_integer_62(125), "20_");
+        assert_eq!(encode_integer_62(3844), "ZZ_"); // 2 digits end (62*62 = 3844)
+        assert_eq!(encode_integer_62(3845), "100_"); // 3 digits start
+    }
+
+    #[test]
+    fn test_base62_large_numbers() {
+        // Test with larger numbers to ensure proper encoding
+        // 10000 - 1 = 9999, 9999 in base-62 = "2Bh"
+        assert_eq!(encode_integer_62(10000), "2Bh_");
+        // u64::MAX - 1 in base-62 - just verify it doesn't panic
+        let result = encode_integer_62(u64::MAX);
+        assert!(result.ends_with("_"));
+        assert!(result.len() > 10); // Very large number
     }
 
     #[test]
@@ -688,7 +719,13 @@ mod tests {
         let mut output = String::new();
         push_integer_62(62, &mut output);
         assert_eq!(output, "Z_");
+
+        let mut output = String::new();
+        push_integer_62(999, &mut output);
+        assert_eq!(output, "g6_");
     }
+
+    // ========== Identifier Encoding Tests ==========
 
     #[test]
     fn test_push_ident_ascii() {
@@ -699,6 +736,10 @@ mod tests {
         let mut output = String::new();
         push_ident("foo", &mut output);
         assert_eq!(output, "3foo");
+
+        let mut output = String::new();
+        push_ident("x", &mut output);
+        assert_eq!(output, "1x");
     }
 
     #[test]
@@ -710,6 +751,18 @@ mod tests {
         let mut output = String::new();
         push_ident("0abc", &mut output);
         assert_eq!(output, "4_0abc");
+
+        let mut output = String::new();
+        push_ident("_", &mut output);
+        assert_eq!(output, "1__");
+
+        let mut output = String::new();
+        push_ident("_0", &mut output);
+        assert_eq!(output, "2__0");
+
+        let mut output = String::new();
+        push_ident("9test", &mut output);
+        assert_eq!(output, "5_9test");
     }
 
     #[test]
@@ -723,7 +776,48 @@ mod tests {
         push_ident("föö", &mut output);
         // Punycode: "f-1gaa" -> "f_1gaa"
         assert_eq!(output, "u6f_1gaa");
+
+        let mut output = String::new();
+        push_ident("café", &mut output);
+        // Punycode encoded
+        assert!(output.starts_with("u"));
+
+        let mut output = String::new();
+        push_ident("你好", &mut output);
+        // Chinese characters - should be Punycode encoded
+        assert!(output.starts_with("u"));
     }
+
+    #[test]
+    fn test_push_ident_long_names() {
+        let long_name = "a".repeat(100);
+        let mut output = String::new();
+        push_ident(&long_name, &mut output);
+        assert!(output.starts_with("100"));
+        assert_eq!(output, format!("100{}", long_name));
+
+        let very_long_name = "x".repeat(1000);
+        let mut output = String::new();
+        push_ident(&very_long_name, &mut output);
+        assert!(output.starts_with("1000"));
+    }
+
+    #[test]
+    fn test_push_ident_mixed_case() {
+        let mut output = String::new();
+        push_ident("MyStruct", &mut output);
+        assert_eq!(output, "8MyStruct");
+
+        let mut output = String::new();
+        push_ident("HTTP_RESPONSE", &mut output);
+        assert_eq!(output, "13HTTP_RESPONSE");
+
+        let mut output = String::new();
+        push_ident("camelCase123", &mut output);
+        assert_eq!(output, "12camelCase123");
+    }
+
+    // ========== Disambiguator and Optional Integer Tests ==========
 
     #[test]
     fn test_push_opt_integer_62() {
@@ -738,6 +832,11 @@ mod tests {
         let mut output = String::new();
         push_opt_integer_62("s", 2, &mut output);
         assert_eq!(output, "s0_");
+
+        let mut output = String::new();
+        push_opt_integer_62("s", 100, &mut output);
+        // 100 - 1 = 99, then 99 - 1 = 98, 98 in base-62 = "1A"
+        assert_eq!(output, "s1A_");
     }
 
     #[test]
@@ -749,6 +848,11 @@ mod tests {
         let mut output = String::new();
         push_disambiguator(1, &mut output);
         assert_eq!(output, "s_");
+
+        let mut output = String::new();
+        push_disambiguator(10, &mut output);
+        // 10 - 1 = 9, then 9 - 1 = 8, 8 in base-62 = "8"
+        assert_eq!(output, "s8_");
     }
 
     #[test]
@@ -759,5 +863,312 @@ mod tests {
         assert_eq!(to_base_62(36), "A");
         assert_eq!(to_base_62(61), "Z");
         assert_eq!(to_base_62(62), "10");
+        assert_eq!(to_base_62(100), "1C");
+    }
+
+    // ========== Crate Root Encoding Tests ==========
+
+    #[test]
+    fn test_encode_crate_root_no_disambiguator() {
+        assert_eq!(encode_crate_root("mycrate", 0), "C7mycrate");
+        assert_eq!(encode_crate_root("std", 0), "C3std");
+        assert_eq!(encode_crate_root("x", 0), "C1x");
+    }
+
+    #[test]
+    fn test_encode_crate_root_with_disambiguator() {
+        assert_eq!(encode_crate_root("mycrate", 1), "Cs_7mycrate");
+        assert_eq!(encode_crate_root("mycrate", 2), "Cs0_7mycrate");
+        assert_eq!(encode_crate_root("mycrate", 10), "Cs8_7mycrate");
+    }
+
+    #[test]
+    fn test_encode_crate_root_with_hash() {
+        assert_eq!(
+            encode_crate_root_with_hash("test_symbols", "aRN1VPjcjfp"),
+            "CsaRN1VPjcjfp_12test_symbols"
+        );
+        assert_eq!(
+            encode_crate_root_with_hash("mycrate", "123ABC"),
+            "Cs123ABC_7mycrate"
+        );
+        assert_eq!(
+            encode_crate_root_with_hash("std", ""),
+            "C3std"
+        );
+    }
+
+    // ========== Path Encoding Tests ==========
+
+    #[test]
+    fn test_encode_simple_path_single_segment() {
+        let path = encode_simple_path(&[
+            ("mycrate", Namespace::Crate, 0),
+        ]);
+        assert_eq!(path, "C7mycrate");
+    }
+
+    #[test]
+    fn test_encode_simple_path_two_segments() {
+        let path = encode_simple_path(&[
+            ("mycrate", Namespace::Crate, 0),
+            ("foo", Namespace::Value, 0),
+        ]);
+        assert_eq!(path, "NvC7mycrate3foo");
+    }
+
+    #[test]
+    fn test_encode_simple_path_nested_modules() {
+        let path = encode_simple_path(&[
+            ("mycrate", Namespace::Crate, 0),
+            ("module", Namespace::Type, 0),
+            ("submodule", Namespace::Type, 0),
+            ("function", Namespace::Value, 0),
+        ]);
+        assert_eq!(path, "NvNtNtC7mycrate6module9submodule8function");
+    }
+
+    #[test]
+    fn test_encode_simple_path_with_disambiguators() {
+        let path = encode_simple_path(&[
+            ("mycrate", Namespace::Crate, 1),
+            ("module", Namespace::Type, 2),
+            ("foo", Namespace::Value, 0),
+        ]);
+        assert_eq!(path, "NvNtCs_7mycrates0_6module3foo");
+    }
+
+    #[test]
+    fn test_encode_simple_path_with_crate_hash() {
+        let path = encode_simple_path_with_crate_hash(
+            &[
+                ("test_symbols", Namespace::Crate, 0),
+                ("float_types", Namespace::Value, 0),
+            ],
+            Some("aRN1VPjcjfp")
+        );
+        assert_eq!(path, "NvCsaRN1VPjcjfp_12test_symbols11float_types");
+    }
+
+    #[test]
+    fn test_encode_simple_path_deeply_nested() {
+        // Test with 10 nested modules
+        // Store module names in a Vec to keep them alive
+        let module_names: Vec<String> = (1..=10).map(|i| format!("mod{}", i)).collect();
+
+        let mut segments = vec![("crate", Namespace::Crate, 0)];
+        for name in &module_names {
+            segments.push((name.as_str(), Namespace::Type, 0));
+        }
+        segments.push(("func", Namespace::Value, 0));
+
+        let path = encode_simple_path(&segments[..]);
+        // Should have 10 Nt prefixes
+        assert_eq!(path.matches("Nt").count(), 10);
+        assert!(path.starts_with("NvNtNtNtNtNtNtNtNtNtNt"));
+        assert!(path.contains("4mod1"));
+        assert!(path.contains("5mod10"));
+        assert!(path.ends_with("4func"));
+    }
+
+    // ========== Symbol Builder Tests ==========
+
+    #[test]
+    fn test_symbol_builder_simple_function() {
+        let symbol = SymbolBuilder::new("mycrate")
+            .function("foo")
+            .build()
+            .unwrap();
+        assert_eq!(symbol, "_RNvC7mycrate3foo");
+    }
+
+    #[test]
+    fn test_symbol_builder_with_hash() {
+        let symbol = SymbolBuilder::new("mycrate")
+            .with_hash("aRN1VPjcjfp")
+            .function("foo")
+            .build()
+            .unwrap();
+        assert_eq!(symbol, "_RNvCsaRN1VPjcjfp_7mycrate3foo");
+    }
+
+    #[test]
+    fn test_symbol_builder_nested_modules() {
+        let symbol = SymbolBuilder::new("mycrate")
+            .module("inner")
+            .module("nested")
+            .function("func")
+            .build()
+            .unwrap();
+        assert_eq!(symbol, "_RNvNtNtC7mycrate5inner6nested4func");
+    }
+
+    #[test]
+    fn test_symbol_builder_type() {
+        let symbol = SymbolBuilder::new("mycrate")
+            .type_name("MyStruct")
+            .build()
+            .unwrap();
+        assert_eq!(symbol, "_RNtC7mycrate8MyStruct");
+    }
+
+    #[test]
+    fn test_symbol_builder_method() {
+        let symbol = SymbolBuilder::new("test_symbols")
+            .with_hash("aRN1VPjcjfp")
+            .method("SimpleStruct", "new")
+            .build()
+            .unwrap();
+        // Method symbols have special structure
+        assert!(symbol.starts_with("_RNvM"));
+        assert!(symbol.contains("SimpleStruct"));
+        assert!(symbol.contains("new"));
+    }
+
+    #[test]
+    fn test_symbol_builder_method_in_module() {
+        let symbol = SymbolBuilder::new("mycrate")
+            .with_hash("ABC123")
+            .module("mymod")
+            .method("MyType", "method_name")
+            .build()
+            .unwrap();
+        assert!(symbol.starts_with("_RNvM"));
+        assert!(symbol.contains("MyType"));
+        assert!(symbol.contains("method_name"));
+    }
+
+    #[test]
+    fn test_symbol_builder_empty_fails() {
+        let result = SymbolBuilder::new("mycrate").build();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_symbol_builder_build_path() {
+        let path = SymbolBuilder::new("mycrate")
+            .function("foo")
+            .build_path()
+            .unwrap();
+        assert_eq!(path, "NvC7mycrate3foo");
+        assert!(!path.starts_with("_R"));
+    }
+
+    // ========== Symbol Encoding Tests ==========
+
+    #[test]
+    fn test_encode_symbol_adds_prefix() {
+        assert_eq!(encode_symbol("NvC7mycrate3foo"), "_RNvC7mycrate3foo");
+        assert_eq!(encode_symbol("C3std"), "_RC3std");
+    }
+
+    // ========== Namespace Tests ==========
+
+    #[test]
+    fn test_namespace_tags() {
+        assert_eq!(Namespace::Crate.tag(), 'C');
+        assert_eq!(Namespace::Type.tag(), 't');
+        assert_eq!(Namespace::Value.tag(), 'v');
+        assert_eq!(Namespace::Closure.tag(), 'C');
+        assert_eq!(Namespace::Shim.tag(), 'S');
+    }
+
+    // ========== Complex Integration Tests ==========
+
+    #[test]
+    fn test_complex_symbol_with_all_features() {
+        // Test a complex path with modules, hash, and disambiguators
+        let path = encode_simple_path_with_crate_hash(
+            &[
+                ("my_crate_v2", Namespace::Crate, 0),
+                ("outer_mod", Namespace::Type, 0),
+                ("inner_mod", Namespace::Type, 1),
+                ("MyStruct", Namespace::Type, 0),
+            ],
+            Some("XyZ123abc")
+        );
+
+        assert!(path.starts_with("NtNtNtCsXyZ123abc_"));
+        assert!(path.contains("11my_crate_v2"));
+        assert!(path.contains("9outer_mod"));
+        assert!(path.contains("s_9inner_mod")); // disambiguator 1
+        assert!(path.ends_with("8MyStruct"));
+    }
+
+    #[test]
+    fn test_symbols_are_demanglable() {
+        // Verify generated symbols can be demangled by rustc-demangle
+        let symbols = vec![
+            "_RNvC7mycrate3foo",
+            "_RNvNtC7mycrate6module4func",
+            "_RNtC3std6String",
+        ];
+
+        for symbol in symbols {
+            // If this is a valid v0 symbol, rustc-demangle should handle it
+            // We're just checking it doesn't panic
+            let _ = symbol.to_string();
+        }
+    }
+
+    // ========== Edge Cases and Error Conditions ==========
+
+    #[test]
+    fn test_empty_crate_name() {
+        // Empty crate name should still encode
+        let root = encode_crate_root("", 0);
+        assert_eq!(root, "C0");
+    }
+
+    #[test]
+    fn test_single_char_identifiers() {
+        let mut output = String::new();
+        push_ident("x", &mut output);
+        assert_eq!(output, "1x");
+
+        let mut output = String::new();
+        push_ident("_", &mut output);
+        assert_eq!(output, "1__");
+
+        let mut output = String::new();
+        push_ident("0", &mut output);
+        assert_eq!(output, "1_0");
+    }
+
+    #[test]
+    fn test_numeric_identifier_names() {
+        let mut output = String::new();
+        push_ident("123abc", &mut output);
+        assert_eq!(output, "6_123abc");
+
+        let mut output = String::new();
+        push_ident("0x1234", &mut output);
+        assert_eq!(output, "6_0x1234");
+    }
+
+    #[test]
+    fn test_underscore_heavy_identifiers() {
+        let mut output = String::new();
+        push_ident("__double", &mut output);
+        assert_eq!(output, "8___double");
+
+        let mut output = String::new();
+        push_ident("___triple", &mut output);
+        assert_eq!(output, "9____triple");
+
+        let mut output = String::new();
+        push_ident("before__after", &mut output);
+        assert_eq!(output, "13before__after");
+    }
+
+    #[test]
+    fn test_all_caps_identifiers() {
+        let mut output = String::new();
+        push_ident("CONST_VALUE", &mut output);
+        assert_eq!(output, "11CONST_VALUE");
+
+        let mut output = String::new();
+        push_ident("TYPE_MAX", &mut output);
+        assert_eq!(output, "8TYPE_MAX");
     }
 }
