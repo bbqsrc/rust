@@ -123,10 +123,56 @@ pub struct SymbolBuilder {
     crate_hash: Option<String>,
     segments: Vec<(String, Namespace)>,
     method_info: Option<MethodInfo>,
+    /// Generic arguments (types, lifetimes, consts)
+    generic_args: Vec<GenericArg>,
     /// Cached positions for backreferences (mimics rustc's paths HashMap)
     path_cache: std::collections::HashMap<String, usize>,
     /// Start offset for backrefs (length of "_R" prefix = 2)
     start_offset: usize,
+}
+
+/// Generic argument for function/type instantiation
+#[derive(Debug, Clone, PartialEq)]
+pub enum GenericArg {
+    /// Type parameter - represented by a primitive type tag or complex type
+    Type(TypeArg),
+    /// Lifetime parameter
+    Lifetime(LifetimeArg),
+    /// Const parameter
+    Const(u64),
+}
+
+/// Type argument for generic instantiation
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeArg {
+    /// Primitive types
+    Bool,
+    Char,
+    I8, I16, I32, I64, I128, Isize,
+    U8, U16, U32, U64, U128, Usize,
+    F32, F64,
+    Str,
+    Never,
+    Unit,
+    /// Reference type: &'lifetime T or &'lifetime mut T
+    Reference { lifetime: Option<LifetimeArg>, mutable: bool, inner: Box<TypeArg> },
+    /// Raw pointer: *const T or *mut T
+    RawPtr { mutable: bool, inner: Box<TypeArg> },
+    /// Tuple type: (T1, T2, ..., Tn)
+    Tuple(Vec<TypeArg>),
+    /// Array type: [T; N]
+    Array { inner: Box<TypeArg>, len: u64 },
+    /// Slice type: [T]
+    Slice(Box<TypeArg>),
+}
+
+/// Lifetime argument
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifetimeArg {
+    /// Erased lifetime (encoded as L0)
+    Erased,
+    /// Named lifetime with De Bruijn index
+    Bound { index: u32 },
 }
 
 #[derive(Debug, Clone)]
@@ -147,6 +193,7 @@ impl SymbolBuilder {
             crate_hash: None,
             segments: Vec::new(),
             method_info: None,
+            generic_args: Vec::new(),
             path_cache: std::collections::HashMap::new(),
             start_offset: 2, // Length of "_R" prefix
         }
@@ -208,6 +255,102 @@ impl SymbolBuilder {
         self
     }
 
+    /// Add a generic type argument.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rfc2603::{SymbolBuilder, GenericArg, TypeArg};
+    ///
+    /// // fn foo<T: u32>() instantiated as foo::<u32>
+    /// let symbol = SymbolBuilder::new("mycrate")
+    ///     .function("foo")
+    ///     .with_generic(GenericArg::Type(TypeArg::U32))
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn with_generic(mut self, arg: GenericArg) -> Self {
+        self.generic_args.push(arg);
+        self
+    }
+
+    /// Add multiple generic arguments.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rfc2603::{SymbolBuilder, GenericArg, TypeArg};
+    ///
+    /// // fn foo<T, U>() instantiated as foo::<u32, i64>
+    /// let symbol = SymbolBuilder::new("mycrate")
+    ///     .function("foo")
+    ///     .with_generics(&[
+    ///         GenericArg::Type(TypeArg::U32),
+    ///         GenericArg::Type(TypeArg::I64),
+    ///     ])
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn with_generics(mut self, args: &[GenericArg]) -> Self {
+        self.generic_args.extend_from_slice(args);
+        self
+    }
+
+    /// Add a type parameter to the generic arguments.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rfc2603::{SymbolBuilder, TypeArg};
+    ///
+    /// let symbol = SymbolBuilder::new("mycrate")
+    ///     .function("foo")
+    ///     .with_type_param(TypeArg::U32)
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn with_type_param(mut self, ty: TypeArg) -> Self {
+        self.generic_args.push(GenericArg::Type(ty));
+        self
+    }
+
+    /// Add a lifetime parameter to the generic arguments.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rfc2603::{SymbolBuilder, LifetimeArg, GenericArg};
+    ///
+    /// let symbol = SymbolBuilder::new("mycrate")
+    ///     .function("foo")
+    ///     .with_lifetime(LifetimeArg::Erased)
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn with_lifetime(mut self, lifetime: LifetimeArg) -> Self {
+        self.generic_args.push(GenericArg::Lifetime(lifetime));
+        self
+    }
+
+    /// Add a const parameter to the generic arguments.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rfc2603::SymbolBuilder;
+    ///
+    /// // fn foo<const N: usize>() instantiated as foo::<5>
+    /// let symbol = SymbolBuilder::new("mycrate")
+    ///     .function("foo")
+    ///     .with_const_param(5)
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn with_const_param(mut self, value: u64) -> Self {
+        self.generic_args.push(GenericArg::Const(value));
+        self
+    }
+
     /// Build the complete mangled symbol with `_R` prefix.
     ///
     /// Returns an error if the path is invalid (e.g., no segments added).
@@ -221,6 +364,11 @@ impl SymbolBuilder {
             return Err("Symbol path must have at least one segment (function, module, etc.)");
         }
 
+        // If we have generic arguments, we need to build an instantiation symbol
+        if !self.generic_args.is_empty() {
+            return self.build_generic_instantiation();
+        }
+
         let mut segments_with_crate = vec![(&self.crate_name[..], Namespace::Crate, 0u64)];
         for (name, ns) in &self.segments {
             segments_with_crate.push((name, *ns, 0));
@@ -231,6 +379,139 @@ impl SymbolBuilder {
             self.crate_hash.as_deref(),
         );
         Ok(encode_symbol(&path))
+    }
+
+    fn build_generic_instantiation(self) -> Result<String, &'static str> {
+        // Generic instantiation format: _R + I + <path> + <generic-args> + E
+        // Example: _RINvC7mycrate3foomE  (foo::<u32>)
+
+        let mut m = V0Mangler::new();
+
+        // I marker for generic instantiation
+        m.push("I");
+
+        // Build the path to the generic item
+        let mut segments_with_crate = vec![(&self.crate_name[..], Namespace::Crate, 0u64)];
+        for (name, ns) in &self.segments {
+            segments_with_crate.push((name, *ns, 0));
+        }
+
+        let path = encode_simple_path_with_crate_hash(
+            &segments_with_crate,
+            self.crate_hash.as_deref(),
+        );
+        m.push(&path);
+
+        // Encode generic arguments
+        for arg in &self.generic_args {
+            self.encode_generic_arg(&mut m, arg)?;
+        }
+
+        // E marker to close generic instantiation
+        m.push("E");
+
+        Ok(m.out)
+    }
+
+    fn encode_generic_arg(&self, m: &mut V0Mangler, arg: &GenericArg) -> Result<(), &'static str> {
+        match arg {
+            GenericArg::Type(ty) => self.encode_type_arg(m, ty),
+            GenericArg::Lifetime(lt) => self.encode_lifetime_arg(m, lt),
+            GenericArg::Const(val) => {
+                // Const argument: K + <type> + <value>
+                // For now, assume usize type (j)
+                m.push("Kj");
+                m.push_integer_62(*val);
+                Ok(())
+            }
+        }
+    }
+
+    fn encode_type_arg(&self, m: &mut V0Mangler, ty: &TypeArg) -> Result<(), &'static str> {
+        match ty {
+            // Primitive types
+            TypeArg::Bool => { m.push("b"); Ok(()) }
+            TypeArg::Char => { m.push("c"); Ok(()) }
+            TypeArg::I8 => { m.push("a"); Ok(()) }
+            TypeArg::I16 => { m.push("s"); Ok(()) }
+            TypeArg::I32 => { m.push("l"); Ok(()) }
+            TypeArg::I64 => { m.push("x"); Ok(()) }
+            TypeArg::I128 => { m.push("n"); Ok(()) }
+            TypeArg::Isize => { m.push("i"); Ok(()) }
+            TypeArg::U8 => { m.push("h"); Ok(()) }
+            TypeArg::U16 => { m.push("t"); Ok(()) }
+            TypeArg::U32 => { m.push("m"); Ok(()) }
+            TypeArg::U64 => { m.push("y"); Ok(()) }
+            TypeArg::U128 => { m.push("o"); Ok(()) }
+            TypeArg::Usize => { m.push("j"); Ok(()) }
+            TypeArg::F32 => { m.push("f"); Ok(()) }
+            TypeArg::F64 => { m.push("d"); Ok(()) }
+            TypeArg::Str => { m.push("e"); Ok(()) }
+            TypeArg::Never => { m.push("z"); Ok(()) }
+            TypeArg::Unit => { m.push("u"); Ok(()) }
+
+            // Reference: R (immutable) or Q (mutable) + lifetime + inner type
+            TypeArg::Reference { lifetime, mutable, inner } => {
+                m.push(if *mutable { "Q" } else { "R" });
+                if let Some(lt) = lifetime {
+                    self.encode_lifetime_arg(m, lt)?;
+                } else {
+                    // Erased lifetime
+                    m.push("L");
+                    m.push_integer_62(0);
+                }
+                self.encode_type_arg(m, inner)?;
+                Ok(())
+            }
+
+            // Raw pointer: P (const) or O (mut) + inner type
+            TypeArg::RawPtr { mutable, inner } => {
+                m.push(if *mutable { "O" } else { "P" });
+                self.encode_type_arg(m, inner)?;
+                Ok(())
+            }
+
+            // Tuple: T + elements + E
+            TypeArg::Tuple(elements) => {
+                m.push("T");
+                for elem in elements {
+                    self.encode_type_arg(m, elem)?;
+                }
+                m.push("E");
+                Ok(())
+            }
+
+            // Array: A + element type + const length
+            TypeArg::Array { inner, len } => {
+                m.push("A");
+                self.encode_type_arg(m, inner)?;
+                m.push("Kj"); // Const with usize type
+                m.push_integer_62(*len);
+                Ok(())
+            }
+
+            // Slice: S + element type
+            TypeArg::Slice(inner) => {
+                m.push("S");
+                self.encode_type_arg(m, inner)?;
+                Ok(())
+            }
+        }
+    }
+
+    fn encode_lifetime_arg(&self, m: &mut V0Mangler, lt: &LifetimeArg) -> Result<(), &'static str> {
+        match lt {
+            LifetimeArg::Erased => {
+                m.push("L");
+                m.push_integer_62(0);
+                Ok(())
+            }
+            LifetimeArg::Bound { index } => {
+                m.push("L");
+                m.push_integer_62(*index as u64 + 1);
+                Ok(())
+            }
+        }
     }
 
     fn build_method_symbol(self) -> Result<String, &'static str> {
