@@ -6,6 +6,7 @@ description = "Standalone implementation of Rust v0 symbol name mangling (RFC 26
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+dlopen2 = "0.8.0"
 facet = "0.31.3"
 facet-stele = { git = "file:///home/user/facet-stele", version = "0.1.0" }
 # Punycode encoding for Unicode identifiers
