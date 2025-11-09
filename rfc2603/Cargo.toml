@@ -7,8 +7,10 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 facet = "0.31.3"
+facet-stele = { git = "file:///home/user/facet-stele", version = "0.1.0" }
 # Punycode encoding for Unicode identifiers
 punycode = "0.4"
+stele-inventory = { git = "file:///home/user/facet-stele", version = "0.1.0" }
 
 # This crate is standalone and not part of the rust workspace
 [workspace]
