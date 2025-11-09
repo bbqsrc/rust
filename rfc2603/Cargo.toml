@@ -13,5 +13,8 @@ facet-stele = { git = "file:///home/user/facet-stele", version = "0.1.0" }
 punycode = "0.4"
 stele-inventory = { git = "file:///home/user/facet-stele", version = "0.1.0" }
 
+[dev-dependencies]
+rustc-demangle = "0.1"
+
 # This crate is standalone and not part of the rust workspace
 [workspace]
