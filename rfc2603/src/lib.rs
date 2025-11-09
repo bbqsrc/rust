@@ -59,6 +59,11 @@
 
 use std::fmt::Write;
 
+mod v0_mangler;
+use v0_mangler::V0Mangler;
+
+pub mod rustc_port;
+
 /// Namespace tags used in v0 symbol mangling
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Namespace {
@@ -118,6 +123,10 @@ pub struct SymbolBuilder {
     crate_hash: Option<String>,
     segments: Vec<(String, Namespace)>,
     method_info: Option<MethodInfo>,
+    /// Cached positions for backreferences (mimics rustc's paths HashMap)
+    path_cache: std::collections::HashMap<String, usize>,
+    /// Start offset for backrefs (length of "_R" prefix = 2)
+    start_offset: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +147,8 @@ impl SymbolBuilder {
             crate_hash: None,
             segments: Vec::new(),
             method_info: None,
+            path_cache: std::collections::HashMap::new(),
+            start_offset: 2, // Length of "_R" prefix
         }
     }
 
@@ -223,11 +234,60 @@ impl SymbolBuilder {
     }
 
     fn build_method_symbol(self) -> Result<String, &'static str> {
-        // Method symbol format: _R + Nv + M + <impl-path> + Nt + <type-path> + <type-name> + <method-name>
+        // Method symbol format: _R + Nv + M + <impl-path> + Nt + <backref-to-impl> + <type-name> + <method-name>
         // For SimpleStruct::new: _RNvMCsaRN1VPjcjfp_12test_symbolsNtB2_12SimpleStruct3new
-        // TODO: Implement backreferences properly
-        // For now, we'll generate without backrefs and it will fail to match
-        Err("Method encoding with backreferences not yet implemented")
+
+        let method_info = self.method_info.ok_or("Method info not set")?;
+
+        let mut m = V0Mangler::new();
+
+        // Outer wrapper: Nv (value namespace for the method itself)
+        m.push("Nv");
+
+        // M marker for inherent impl
+        m.push("M");
+
+        // Encode the impl path (crate + any modules)
+        // Record this position for backreference
+        let impl_path_start = m.out.len();
+
+        // Build crate path
+        if let Some(hash) = &self.crate_hash {
+            m.push(&encode_crate_root_with_hash(&self.crate_name, hash));
+        } else {
+            m.push(&encode_crate_root(&self.crate_name, 0));
+        }
+
+        // Add any module segments from impl_path
+        for (name, ns) in &method_info.impl_path {
+            m.path_append_ns(
+                |_m| {}, // No prefix for these segments
+                ns.tag(),
+                0,
+                name,
+            );
+        }
+
+        // Cache the impl path position for backref
+        // Use a key that represents this path
+        let impl_path_key = format!("impl:{}:{:?}", self.crate_name, method_info.impl_path);
+        m.paths.insert(impl_path_key.clone(), impl_path_start);
+
+        // Now encode the type: Nt + <backref> + <type-name>
+        m.push("Nt");
+
+        // Use backref to the impl path
+        if let Some(&pos) = m.paths.get(&impl_path_key) {
+            m.print_backref(pos);
+        }
+
+        // Type name
+        m.push_ident(&method_info.type_name);
+
+        // Method name
+        m.push_ident(&method_info.method_name);
+
+        Ok(m.out)
     }
 
     /// Build just the path portion without the `_R` prefix.

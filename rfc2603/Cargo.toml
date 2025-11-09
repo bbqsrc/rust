@@ -6,6 +6,7 @@ description = "Standalone implementation of Rust v0 symbol name mangling (RFC 26
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+facet = "0.31.3"
 # Punycode encoding for Unicode identifiers
 punycode = "0.4"
 
