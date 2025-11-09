@@ -87,6 +87,116 @@ impl Namespace {
     }
 }
 
+/// Builder for constructing v0 mangled symbols.
+///
+/// This provides a fluent API for building symbol paths with proper validation.
+///
+/// # Examples
+///
+/// ```
+/// use rfc2603::SymbolBuilder;
+///
+/// // Simple function in a crate
+/// let symbol = SymbolBuilder::new("mycrate")
+///     .function("foo")
+///     .build()
+///     .unwrap();
+/// assert_eq!(symbol, "_RNvC7mycrate3foo");
+///
+/// // Nested module path
+/// let symbol = SymbolBuilder::new("mycrate")
+///     .with_hash("aRN1VPjcjfp")
+///     .module("inner")
+///     .module("nested")
+///     .function("func")
+///     .build()
+///     .unwrap();
+/// ```
+#[derive(Debug, Clone)]
+pub struct SymbolBuilder {
+    crate_name: String,
+    crate_hash: Option<String>,
+    segments: Vec<(String, Namespace)>,
+}
+
+impl SymbolBuilder {
+    /// Create a new symbol builder with the given crate name.
+    pub fn new(crate_name: impl Into<String>) -> Self {
+        Self {
+            crate_name: crate_name.into(),
+            crate_hash: None,
+            segments: Vec::new(),
+        }
+    }
+
+    /// Set the crate hash (base-62 encoded, without 's' prefix or '_' suffix).
+    pub fn with_hash(mut self, hash: impl Into<String>) -> Self {
+        self.crate_hash = Some(hash.into());
+        self
+    }
+
+    /// Add a module (type namespace) to the path.
+    pub fn module(mut self, name: impl Into<String>) -> Self {
+        self.segments.push((name.into(), Namespace::Type));
+        self
+    }
+
+    /// Add a function (value namespace) to the path.
+    pub fn function(mut self, name: impl Into<String>) -> Self {
+        self.segments.push((name.into(), Namespace::Value));
+        self
+    }
+
+    /// Add a constant or static (value namespace) to the path.
+    pub fn value(mut self, name: impl Into<String>) -> Self {
+        self.segments.push((name.into(), Namespace::Value));
+        self
+    }
+
+    /// Add a type (type namespace) to the path.
+    pub fn type_name(mut self, name: impl Into<String>) -> Self {
+        self.segments.push((name.into(), Namespace::Type));
+        self
+    }
+
+    /// Build the complete mangled symbol with `_R` prefix.
+    ///
+    /// Returns an error if the path is invalid (e.g., no segments added).
+    pub fn build(self) -> Result<String, &'static str> {
+        if self.segments.is_empty() {
+            return Err("Symbol path must have at least one segment (function, module, etc.)");
+        }
+
+        let mut segments_with_crate = vec![(&self.crate_name[..], Namespace::Crate, 0u64)];
+        for (name, ns) in &self.segments {
+            segments_with_crate.push((name, *ns, 0));
+        }
+
+        let path = encode_simple_path_with_crate_hash(
+            &segments_with_crate,
+            self.crate_hash.as_deref(),
+        );
+        Ok(encode_symbol(&path))
+    }
+
+    /// Build just the path portion without the `_R` prefix.
+    pub fn build_path(self) -> Result<String, &'static str> {
+        if self.segments.is_empty() {
+            return Err("Symbol path must have at least one segment (function, module, etc.)");
+        }
+
+        let mut segments_with_crate = vec![(&self.crate_name[..], Namespace::Crate, 0u64)];
+        for (name, ns) in &self.segments {
+            segments_with_crate.push((name, *ns, 0));
+        }
+
+        Ok(encode_simple_path_with_crate_hash(
+            &segments_with_crate,
+            self.crate_hash.as_deref(),
+        ))
+    }
+}
+
 /// Encode a crate root path element.
 ///
 /// A crate root is encoded as `C` followed by an optional disambiguator and the crate name.
@@ -110,6 +220,33 @@ pub fn encode_crate_root(name: &str, disambiguator: u64) -> String {
     output
 }
 
+/// Encode a crate root with a pre-encoded base-62 hash.
+///
+/// This is useful when you have the exact hash from a real symbol and want to
+/// reproduce it exactly. The hash should be the base-62 encoded value without
+/// the `s` prefix or `_` suffix.
+///
+/// # Examples
+///
+/// ```
+/// use rfc2603::encode_crate_root_with_hash;
+///
+/// // Real crate hash from compiled symbol
+/// let crate_root = encode_crate_root_with_hash("test_symbols", "aRN1VPjcjfp");
+/// assert_eq!(crate_root, "CsaRN1VPjcjfp_12test_symbols");
+/// ```
+pub fn encode_crate_root_with_hash(name: &str, hash_b62: &str) -> String {
+    let mut output = String::new();
+    output.push('C');
+    if !hash_b62.is_empty() {
+        output.push('s');
+        output.push_str(hash_b62);
+        output.push('_');
+    }
+    push_ident(name, &mut output);
+    output
+}
+
 /// Encode a simple path consisting of a sequence of path segments.
 ///
 /// Each segment is a tuple of (name, namespace, disambiguator).
@@ -129,6 +266,34 @@ pub fn encode_crate_root(name: &str, disambiguator: u64) -> String {
 /// assert_eq!(path, "NvNtC7mycrate6module8function");
 /// ```
 pub fn encode_simple_path(segments: &[(&str, Namespace, u64)]) -> String {
+    encode_simple_path_with_crate_hash(segments, None)
+}
+
+/// Encode a simple path with an optional crate hash.
+///
+/// This is identical to [`encode_simple_path`] but allows specifying a pre-encoded
+/// base-62 crate hash for the root crate. The hash is only used if the first segment
+/// is a crate namespace.
+///
+/// # Examples
+///
+/// ```
+/// use rfc2603::{encode_simple_path_with_crate_hash, Namespace};
+///
+/// // Encode with crate hash
+/// let path = encode_simple_path_with_crate_hash(
+///     &[
+///         ("test_symbols", Namespace::Crate, 0),
+///         ("float_types", Namespace::Value, 0),
+///     ],
+///     Some("aRN1VPjcjfp")
+/// );
+/// assert_eq!(path, "NvCsaRN1VPjcjfp_12test_symbols11float_types");
+/// ```
+pub fn encode_simple_path_with_crate_hash(
+    segments: &[(&str, Namespace, u64)],
+    crate_hash: Option<&str>,
+) -> String {
     if segments.is_empty() {
         return String::new();
     }
@@ -138,12 +303,18 @@ pub fn encode_simple_path(segments: &[(&str, Namespace, u64)]) -> String {
     // First segment (leftmost in the path, rightmost in iteration)
     let (name, ns, disambiguator) = segments[0];
     if ns == Namespace::Crate {
-        output.push('C');
+        if let Some(hash) = crate_hash {
+            output.push_str(&encode_crate_root_with_hash(name, hash));
+        } else {
+            output.push('C');
+            push_disambiguator(disambiguator, &mut output);
+            push_ident(name, &mut output);
+        }
     } else {
         output.push(ns.tag());
+        push_disambiguator(disambiguator, &mut output);
+        push_ident(name, &mut output);
     }
-    push_disambiguator(disambiguator, &mut output);
-    push_ident(name, &mut output);
 
     // Remaining segments wrap around the previous ones
     for &(name, ns, disambiguator) in segments[1..].iter() {
