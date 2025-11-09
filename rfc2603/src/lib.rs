@@ -1327,4 +1327,47 @@ mod tests {
 
         assert!(symbols[0].starts_with("_RNVC"));
     }
+
+    #[test]
+    fn test_create_symbol_iterator_matches_nm_output() {
+        // Test that symbols match the format shown by nm on real binaries
+        // Real nm output: _RNvCs5GYaaS9NRMV_12test_symbols11float_types
+
+        // Without hash (simple case)
+        let symbols: Vec<String> = create_symbol_iterator("mycrate", &["foo"])
+            .collect();
+        assert_eq!(symbols[0], "_RNvC7mycrate3foo");
+
+        // Verify this matches what we'd see from a real binary
+        // The format should be: _R + Nv + C + length + name + length + function
+        assert!(symbols[0].starts_with("_RNv"));
+        assert!(symbols[0].contains("C7mycrate"));
+        assert!(symbols[0].ends_with("3foo"));
+    }
+
+    #[test]
+    fn test_create_symbol_iterator_real_world_example() {
+        // Test symbols that would appear in real nm output
+        // Based on actual symbols from /home/user/test-symbols library
+        let function_names = &[
+            "float_types",
+            "integer_types",
+            "ptr_function",
+            "ref_function",
+        ];
+
+        let symbols: Vec<String> = create_symbol_iterator("test_symbols", function_names)
+            .collect();
+
+        // Without hash, these should be:
+        assert_eq!(symbols[0], "_RNvC12test_symbols11float_types");
+        assert_eq!(symbols[1], "_RNvC12test_symbols13integer_types");
+        assert_eq!(symbols[2], "_RNvC12test_symbols12ptr_function");
+        assert_eq!(symbols[3], "_RNvC12test_symbols12ref_function");
+
+        // Verify all start with v0 prefix and value namespace
+        for symbol in &symbols {
+            assert!(symbol.starts_with("_RNv"));
+        }
+    }
 }
