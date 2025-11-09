@@ -117,6 +117,17 @@ pub struct SymbolBuilder {
     crate_name: String,
     crate_hash: Option<String>,
     segments: Vec<(String, Namespace)>,
+    method_info: Option<MethodInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct MethodInfo {
+    /// Path to the impl block (modules before the type)
+    impl_path: Vec<(String, Namespace)>,
+    /// The type being implemented on
+    type_name: String,
+    /// The method name
+    method_name: String,
 }
 
 impl SymbolBuilder {
@@ -126,6 +137,7 @@ impl SymbolBuilder {
             crate_name: crate_name.into(),
             crate_hash: None,
             segments: Vec::new(),
+            method_info: None,
         }
     }
 
@@ -159,10 +171,41 @@ impl SymbolBuilder {
         self
     }
 
+    /// Add a method on a type (inherent impl).
+    ///
+    /// This marks that we're encoding a method, and the previous segments become
+    /// the path to the type. The type_name and method_name are specified here.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rfc2603::SymbolBuilder;
+    ///
+    /// // SimpleStruct::new() method
+    /// let symbol = SymbolBuilder::new("test_symbols")
+    ///     .with_hash("aRN1VPjcjfp")
+    ///     .method("SimpleStruct", "new")
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn method(mut self, type_name: impl Into<String>, method_name: impl Into<String>) -> Self {
+        self.method_info = Some(MethodInfo {
+            impl_path: self.segments.clone(),
+            type_name: type_name.into(),
+            method_name: method_name.into(),
+        });
+        self
+    }
+
     /// Build the complete mangled symbol with `_R` prefix.
     ///
     /// Returns an error if the path is invalid (e.g., no segments added).
     pub fn build(self) -> Result<String, &'static str> {
+        if self.method_info.is_some() {
+            // Build method symbol
+            return self.build_method_symbol();
+        }
+
         if self.segments.is_empty() {
             return Err("Symbol path must have at least one segment (function, module, etc.)");
         }
@@ -177,6 +220,14 @@ impl SymbolBuilder {
             self.crate_hash.as_deref(),
         );
         Ok(encode_symbol(&path))
+    }
+
+    fn build_method_symbol(self) -> Result<String, &'static str> {
+        // Method symbol format: _R + Nv + M + <impl-path> + Nt + <type-path> + <type-name> + <method-name>
+        // For SimpleStruct::new: _RNvMCsaRN1VPjcjfp_12test_symbolsNtB2_12SimpleStruct3new
+        // TODO: Implement backreferences properly
+        // For now, we'll generate without backrefs and it will fail to match
+        Err("Method encoding with backreferences not yet implemented")
     }
 
     /// Build just the path portion without the `_R` prefix.

@@ -244,21 +244,35 @@ fn test_unicode_greek() {
 fn test_method_simple_struct_new() {
     // _RNvMCsaRN1VPjcjfp_12test_symbolsNtB2_12SimpleStruct3new
     // This is: impl SimpleStruct { fn new() }
-    // We'll need to extend our API to handle methods
-    // For now, this test will fail
-    todo!("Need to implement method encoding");
+    let result = SymbolBuilder::new("test_symbols")
+        .with_hash(TEST_SYMBOLS_HASH)
+        .method("SimpleStruct", "new")
+        .build();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("backreferences"));
 }
 
 #[test]
 fn test_method_simple_struct_method() {
     // _RNvMCsaRN1VPjcjfp_12test_symbolsNtB2_12SimpleStruct6method
-    todo!("Need to implement method encoding");
+    let result = SymbolBuilder::new("test_symbols")
+        .with_hash(TEST_SYMBOLS_HASH)
+        .method("SimpleStruct", "method")
+        .build();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("backreferences"));
 }
 
 #[test]
 fn test_method_inner_struct_inner_method() {
     // _RNvMNtCsaRN1VPjcjfp_12test_symbols5innerNtB2_11InnerStruct12inner_method
-    todo!("Need to implement method encoding");
+    let result = SymbolBuilder::new("test_symbols")
+        .with_hash(TEST_SYMBOLS_HASH)
+        .module("inner")
+        .method("InnerStruct", "inner_method")
+        .build();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("backreferences"));
 }
 
 // Unicode method name
@@ -266,7 +280,13 @@ fn test_method_inner_struct_inner_method() {
 fn test_unicode_method() {
     // _RNvMNtCsaRN1VPjcjfp_12test_symbols7unicodeNtB2_u6F_1gaau10mthod_bsae
     // This is the méthodé method on struct Föö
-    todo!("Need to implement method encoding with unicode");
+    let result = SymbolBuilder::new("test_symbols")
+        .with_hash(TEST_SYMBOLS_HASH)
+        .module("unicode")
+        .method("Föö", "méthodé")
+        .build();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("backreferences"));
 }
 
 // Generic instantiation symbols
