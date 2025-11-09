@@ -1,1 +1,7 @@
+# Rust build artifacts
 target/
+Cargo.lock
+
+# Symbol dump files
+symbols.txt
+*.txt
