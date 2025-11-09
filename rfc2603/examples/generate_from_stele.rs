@@ -6,7 +6,6 @@
 use dlopen2::wrapper::{Container, WrapperApi};
 use rfc2603::{push_ident, push_integer_62};
 use stele_inventory::ExportedItem;
-use std::collections::HashMap;
 
 #[derive(WrapperApi)]
 struct SteleApi {
