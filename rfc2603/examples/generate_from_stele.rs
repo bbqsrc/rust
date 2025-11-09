@@ -130,46 +130,8 @@ fn mangle_method(
     out
 }
 
-/// Generate a v0 mangled symbol for a struct/enum
-fn mangle_type(crate_name: &str, module_path: &str, type_name: &str, crate_hash: Option<&str>) -> String {
-    let mut out = String::from("_R"); // v0 prefix
-
-    // No Nv prefix for types - type namespace is implicit at top level
-
-    // Build nested path: modules wrap from outside in
-    let modules: Vec<&str> = if module_path != crate_name && !module_path.is_empty() {
-        module_path.split("::").skip(1).collect()
-    } else {
-        Vec::new()
-    };
-
-    // Add Nt for each module level
-    for _ in &modules {
-        out.push_str("Nt");
-    }
-
-    // Crate root - Cs<hash>_<len><name> (with hash) or C<len><name> (without)
-    if let Some(hash) = crate_hash {
-        out.push('C');
-        out.push('s');
-        out.push_str(hash);
-        out.push('_');
-        push_ident(crate_name, &mut out);
-    } else {
-        out.push('C');
-        push_ident(crate_name, &mut out);
-    }
-
-    // Add module segments
-    for segment in modules {
-        push_ident(segment, &mut out);
-    }
-
-    // Type name
-    push_ident(type_name, &mut out);
-
-    out
-}
+// Note: mangle_type function removed because rustc doesn't emit standalone type symbols.
+// Type references only appear embedded within other symbols (methods, generic instantiations, etc.)
 
 fn main() {
     let lib_path = std::env::args()
@@ -193,17 +155,14 @@ fn main() {
     for item in exports.iter() {
         match item {
             ExportedItem::Struct(s) => {
-                let crate_name = s.module_path.split("::").next().unwrap_or("unknown");
-                let symbol = mangle_type(crate_name, s.module_path, s.name, crate_hash);
-                println!("Struct: {} ({})", s.name, s.module_path);
-                println!("  Symbol: {}", symbol);
+                // Note: rustc doesn't emit standalone type symbols to the symbol table.
+                // Type references only appear embedded within other symbols (methods, generics, etc.)
+                println!("Struct: {} ({}) [types don't get standalone symbols]", s.name, s.module_path);
                 println!();
             }
             ExportedItem::Enum(e) => {
-                let crate_name = e.module_path.split("::").next().unwrap_or("unknown");
-                let symbol = mangle_type(crate_name, e.module_path, e.name, crate_hash);
-                println!("Enum: {} ({})", e.name, e.module_path);
-                println!("  Symbol: {}", symbol);
+                // Note: rustc doesn't emit standalone type symbols to the symbol table.
+                println!("Enum: {} ({}) [types don't get standalone symbols]", e.name, e.module_path);
                 println!();
             }
             ExportedItem::Function(f) => {

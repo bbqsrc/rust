@@ -104,38 +104,8 @@ fn mangle_method(
     out
 }
 
-/// Generate a v0 mangled symbol for a struct
-fn mangle_type(crate_name: &str, module_path: &str, type_name: &str, crate_hash: Option<&str>) -> String {
-    let mut out = String::from("_R");
-
-    let modules: Vec<&str> = if module_path != crate_name && !module_path.is_empty() {
-        module_path.split("::").skip(1).collect()
-    } else {
-        Vec::new()
-    };
-
-    for _ in &modules {
-        out.push_str("Nt");
-    }
-
-    if let Some(hash) = crate_hash {
-        out.push('C');
-        out.push('s');
-        out.push_str(hash);
-        out.push('_');
-        push_ident(crate_name, &mut out);
-    } else {
-        out.push('C');
-        push_ident(crate_name, &mut out);
-    }
-
-    for segment in modules {
-        push_ident(segment, &mut out);
-    }
-
-    push_ident(type_name, &mut out);
-    out
-}
+// Note: mangle_type function removed because rustc doesn't emit standalone type symbols.
+// Type references only appear embedded within other symbols (methods, generic instantiations, etc.)
 
 /// Extract actual v0 symbols from compiled library using nm
 fn extract_rustc_symbols(lib_path: &str) -> HashMap<String, String> {
@@ -189,18 +159,15 @@ fn test_symbols_match_rustc() {
     let crate_hash = Some("5GYaaS9NRMV");
     let mut matches = 0;
     let mut mismatches = Vec::new();
+    let mut tested_count = 0;
 
     for item in exports.iter() {
+        // Skip types (Struct/Enum) - rustc doesn't emit standalone type symbols.
+        // Types only appear embedded in other symbols (methods, generic instantiations, etc.)
         let (generated_symbol, item_name) = match item {
-            ExportedItem::Struct(s) => {
-                let crate_name = s.module_path.split("::").next().unwrap_or("unknown");
-                let symbol = mangle_type(crate_name, s.module_path, s.name, crate_hash);
-                (symbol, format!("test_symbols::{}", s.name))
-            }
-            ExportedItem::Enum(e) => {
-                let crate_name = e.module_path.split("::").next().unwrap_or("unknown");
-                let symbol = mangle_type(crate_name, e.module_path, e.name, crate_hash);
-                (symbol, format!("test_symbols::{}", e.name))
+            ExportedItem::Struct(_) | ExportedItem::Enum(_) => {
+                // Rustc doesn't emit standalone type symbols, skip these
+                continue;
             }
             ExportedItem::Function(f) => {
                 let crate_name = f.module_path.split("::").next().unwrap_or("unknown");
@@ -213,6 +180,8 @@ fn test_symbols_match_rustc() {
                 (symbol, format!("{}::{}::{}", m.module_path, m.receiver_type, m.name))
             }
         };
+
+        tested_count += 1;
 
         // Check if this symbol exists in rustc output
         let found_in_rustc = rustc_symbols.values().any(|s| s == &generated_symbol);
@@ -234,7 +203,7 @@ fn test_symbols_match_rustc() {
     }
 
     println!("\n=== Summary ===");
-    println!("Generated symbols: {}", exports.len());
+    println!("Tested symbols: {} (skipped {} type symbols)", tested_count, exports.len() - tested_count);
     println!("Matches with rustc: {}", matches);
     println!("Mismatches: {}", mismatches.len());
 
@@ -245,11 +214,11 @@ fn test_symbols_match_rustc() {
         }
     }
 
-    // Test passes if at least 80% of symbols match
-    let match_rate = matches as f64 / exports.len() as f64;
+    // Test passes if all tested symbols match (100%)
+    let match_rate = matches as f64 / tested_count as f64;
     assert!(
-        match_rate >= 0.8,
-        "Only {:.1}% of symbols matched rustc output (expected >= 80%)",
+        match_rate >= 1.0,
+        "Only {:.1}% of symbols matched rustc output (expected 100%)",
         match_rate * 100.0
     );
 }
