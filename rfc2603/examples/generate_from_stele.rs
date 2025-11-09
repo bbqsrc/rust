@@ -19,6 +19,19 @@ fn mangle_function(crate_name: &str, module_path: &str, function_name: &str, cra
     // Nv = value namespace (function)
     out.push_str("Nv");
 
+    // Build nested path: modules wrap from outside in
+    // For test_symbols::inner::foo, we want: Nt + (crate_path) + "inner" + "foo"
+    let modules: Vec<&str> = if module_path != crate_name && !module_path.is_empty() {
+        module_path.split("::").skip(1).collect()
+    } else {
+        Vec::new()
+    };
+
+    // Add Nt for each module level
+    for _ in &modules {
+        out.push_str("Nt");
+    }
+
     // Crate root - Cs<hash>_<len><name> (with hash) or C<len><name> (without)
     if let Some(hash) = crate_hash {
         out.push('C');
@@ -31,12 +44,9 @@ fn mangle_function(crate_name: &str, module_path: &str, function_name: &str, cra
         push_ident(crate_name, &mut out);
     }
 
-    // Module path segments (if any)
-    if !module_path.is_empty() && module_path != crate_name {
-        for segment in module_path.split("::").skip(1) {
-            out.push_str("Nt"); // Type namespace for module
-            push_ident(segment, &mut out);
-        }
+    // Add module segments
+    for segment in modules {
+        push_ident(segment, &mut out);
     }
 
     // Function name
@@ -62,11 +72,29 @@ fn mangle_method(
     // M = inherent impl with disambiguator
     out.push('M');
     out.push('s');
-    out.push('a'); // disambiguator 'a' (base62 for 0)
-    out.push('_');
 
-    // Record position for backref (after Msa_)
+    // For methods at crate root, disambiguator is 'a'
+    // For nested methods, no disambiguator but still need the '_'
+    let modules: Vec<&str> = if module_path != crate_name && !module_path.is_empty() {
+        module_path.split("::").skip(1).collect()
+    } else {
+        Vec::new()
+    };
+
+    if modules.is_empty() {
+        out.push('a'); // base62 for 0
+        out.push('_');
+    } else {
+        out.push('_'); // just the separator, no disambiguator for nested
+    }
+
+    // Record position for backref (after Msa_ or Ms_)
     let impl_path_pos = out.len();
+
+    // Add Nt for each module level in the impl path
+    for _ in &modules {
+        out.push_str("Nt");
+    }
 
     // Crate root - Cs<hash>_<len><name> (with hash) or C<len><name> (without)
     if let Some(hash) = crate_hash {
@@ -80,12 +108,9 @@ fn mangle_method(
         push_ident(crate_name, &mut out);
     }
 
-    // Module path segments (if any)
-    if !module_path.is_empty() && module_path != crate_name {
-        for segment in module_path.split("::").skip(1) {
-            out.push_str("Nt"); // Type namespace for module
-            push_ident(segment, &mut out);
-        }
+    // Add module segments for impl path
+    for segment in modules {
+        push_ident(segment, &mut out);
     }
 
     // Type: Nt + backref to impl path + type name
@@ -109,7 +134,19 @@ fn mangle_method(
 fn mangle_type(crate_name: &str, module_path: &str, type_name: &str, crate_hash: Option<&str>) -> String {
     let mut out = String::from("_R"); // v0 prefix
 
-    // No Nv/Nt prefix for the outermost type - it's implied
+    // No Nv prefix for types - type namespace is implicit at top level
+
+    // Build nested path: modules wrap from outside in
+    let modules: Vec<&str> = if module_path != crate_name && !module_path.is_empty() {
+        module_path.split("::").skip(1).collect()
+    } else {
+        Vec::new()
+    };
+
+    // Add Nt for each module level
+    for _ in &modules {
+        out.push_str("Nt");
+    }
 
     // Crate root - Cs<hash>_<len><name> (with hash) or C<len><name> (without)
     if let Some(hash) = crate_hash {
@@ -123,12 +160,9 @@ fn mangle_type(crate_name: &str, module_path: &str, type_name: &str, crate_hash:
         push_ident(crate_name, &mut out);
     }
 
-    // Module path segments (if any)
-    if !module_path.is_empty() && module_path != crate_name {
-        for segment in module_path.split("::").skip(1) {
-            out.push_str("Nt"); // Type namespace for module
-            push_ident(segment, &mut out);
-        }
+    // Add module segments
+    for segment in modules {
+        push_ident(segment, &mut out);
     }
 
     // Type name

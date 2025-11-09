@@ -16,6 +16,16 @@ fn mangle_function(crate_name: &str, module_path: &str, function_name: &str, cra
     let mut out = String::from("_R");
     out.push_str("Nv");
 
+    let modules: Vec<&str> = if module_path != crate_name && !module_path.is_empty() {
+        module_path.split("::").skip(1).collect()
+    } else {
+        Vec::new()
+    };
+
+    for _ in &modules {
+        out.push_str("Nt");
+    }
+
     if let Some(hash) = crate_hash {
         out.push('C');
         out.push('s');
@@ -27,11 +37,8 @@ fn mangle_function(crate_name: &str, module_path: &str, function_name: &str, cra
         push_ident(crate_name, &mut out);
     }
 
-    if !module_path.is_empty() && module_path != crate_name {
-        for segment in module_path.split("::").skip(1) {
-            out.push_str("Nt");
-            push_ident(segment, &mut out);
-        }
+    for segment in modules {
+        push_ident(segment, &mut out);
     }
 
     push_ident(function_name, &mut out);
@@ -52,10 +59,25 @@ fn mangle_method(
     out.push_str("Nv");
     out.push('M');
     out.push('s');
-    out.push('a');
-    out.push('_');
+
+    let modules: Vec<&str> = if module_path != crate_name && !module_path.is_empty() {
+        module_path.split("::").skip(1).collect()
+    } else {
+        Vec::new()
+    };
+
+    if modules.is_empty() {
+        out.push('a');
+        out.push('_');
+    } else {
+        out.push('_');
+    }
 
     let impl_path_pos = out.len();
+
+    for _ in &modules {
+        out.push_str("Nt");
+    }
 
     if let Some(hash) = crate_hash {
         out.push('C');
@@ -68,11 +90,8 @@ fn mangle_method(
         push_ident(crate_name, &mut out);
     }
 
-    if !module_path.is_empty() && module_path != crate_name {
-        for segment in module_path.split("::").skip(1) {
-            out.push_str("Nt");
-            push_ident(segment, &mut out);
-        }
+    for segment in modules {
+        push_ident(segment, &mut out);
     }
 
     out.push_str("Nt");
@@ -89,6 +108,16 @@ fn mangle_method(
 fn mangle_type(crate_name: &str, module_path: &str, type_name: &str, crate_hash: Option<&str>) -> String {
     let mut out = String::from("_R");
 
+    let modules: Vec<&str> = if module_path != crate_name && !module_path.is_empty() {
+        module_path.split("::").skip(1).collect()
+    } else {
+        Vec::new()
+    };
+
+    for _ in &modules {
+        out.push_str("Nt");
+    }
+
     if let Some(hash) = crate_hash {
         out.push('C');
         out.push('s');
@@ -100,11 +129,8 @@ fn mangle_type(crate_name: &str, module_path: &str, type_name: &str, crate_hash:
         push_ident(crate_name, &mut out);
     }
 
-    if !module_path.is_empty() && module_path != crate_name {
-        for segment in module_path.split("::").skip(1) {
-            out.push_str("Nt");
-            push_ident(segment, &mut out);
-        }
+    for segment in modules {
+        push_ident(segment, &mut out);
     }
 
     push_ident(type_name, &mut out);
