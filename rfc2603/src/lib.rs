@@ -6,13 +6,29 @@
 //! The v0 mangling format is specified in RFC 2603 and is used by the Rust
 //! compiler to generate deterministic, platform-independent symbol names.
 //!
-//! # Features
+//! # High-Level API
 //!
-//! - **Base-62 encoding**: Compact representation of numbers using `0-9`, `a-z`, `A-Z`
-//! - **Identifier encoding**: Length-prefixed identifiers with optional Punycode for Unicode
-//! - **Punycode support**: Encode Unicode identifiers in ASCII-safe format
+//! The recommended way to use this crate is through the high-level encoding functions:
 //!
-//! # Examples
+//! ```
+//! use rfc2603::{encode_crate_root, encode_simple_path, Namespace};
+//!
+//! // Encode a crate root
+//! let crate_name = encode_crate_root("mycrate", 0);
+//! assert_eq!(crate_name, "C7mycrate");
+//!
+//! // Encode a simple path: mycrate::module::function
+//! let path = encode_simple_path(&[
+//!     ("mycrate", Namespace::Crate, 0),
+//!     ("module", Namespace::Type, 0),
+//!     ("function", Namespace::Value, 0),
+//! ]);
+//! // Results in: NvNtC7mycrate6module8function
+//! ```
+//!
+//! # Low-Level Primitives
+//!
+//! For advanced use cases, low-level primitives are also available:
 //!
 //! ## Base-62 Encoding
 //!
@@ -42,6 +58,126 @@
 //! ```
 
 use std::fmt::Write;
+
+/// Namespace tags used in v0 symbol mangling
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Namespace {
+    /// Crate root namespace (C)
+    Crate,
+    /// Type namespace (t) - modules, types, traits
+    Type,
+    /// Value namespace (v) - functions, constants, statics
+    Value,
+    /// Closure namespace (C)
+    Closure,
+    /// Shim namespace (S)
+    Shim,
+}
+
+impl Namespace {
+    /// Get the character tag for this namespace
+    pub fn tag(&self) -> char {
+        match self {
+            Namespace::Crate => 'C',
+            Namespace::Type => 't',
+            Namespace::Value => 'v',
+            Namespace::Closure => 'C',
+            Namespace::Shim => 'S',
+        }
+    }
+}
+
+/// Encode a crate root path element.
+///
+/// A crate root is encoded as `C` followed by an optional disambiguator and the crate name.
+///
+/// # Examples
+///
+/// ```
+/// use rfc2603::encode_crate_root;
+///
+/// // Crate with no disambiguator
+/// assert_eq!(encode_crate_root("mycrate", 0), "C7mycrate");
+///
+/// // Crate with disambiguator 1
+/// assert_eq!(encode_crate_root("mycrate", 1), "Cs_7mycrate");
+/// ```
+pub fn encode_crate_root(name: &str, disambiguator: u64) -> String {
+    let mut output = String::new();
+    output.push('C');
+    push_disambiguator(disambiguator, &mut output);
+    push_ident(name, &mut output);
+    output
+}
+
+/// Encode a simple path consisting of a sequence of path segments.
+///
+/// Each segment is a tuple of (name, namespace, disambiguator).
+/// The path is built right-to-left, with each segment wrapping the previous one.
+///
+/// # Examples
+///
+/// ```
+/// use rfc2603::{encode_simple_path, Namespace};
+///
+/// // Encode: mycrate::module::function
+/// let path = encode_simple_path(&[
+///     ("mycrate", Namespace::Crate, 0),
+///     ("module", Namespace::Type, 0),
+///     ("function", Namespace::Value, 0),
+/// ]);
+/// assert_eq!(path, "NvNtC7mycrate6module8function");
+/// ```
+pub fn encode_simple_path(segments: &[(&str, Namespace, u64)]) -> String {
+    if segments.is_empty() {
+        return String::new();
+    }
+
+    let mut output = String::new();
+
+    // First segment (leftmost in the path, rightmost in iteration)
+    let (name, ns, disambiguator) = segments[0];
+    if ns == Namespace::Crate {
+        output.push('C');
+    } else {
+        output.push(ns.tag());
+    }
+    push_disambiguator(disambiguator, &mut output);
+    push_ident(name, &mut output);
+
+    // Remaining segments wrap around the previous ones
+    for &(name, ns, disambiguator) in segments[1..].iter() {
+        let prev = output.clone();
+        output.clear();
+        output.push('N');
+        output.push(ns.tag());
+        output.push_str(&prev);
+        push_disambiguator(disambiguator, &mut output);
+        push_ident(name, &mut output);
+    }
+
+    output
+}
+
+/// Encode a full v0 symbol name with the `_R` prefix.
+///
+/// This combines the v0 prefix with a path to create a complete mangled symbol.
+///
+/// # Examples
+///
+/// ```
+/// use rfc2603::{encode_symbol, encode_simple_path, Namespace};
+///
+/// let path = encode_simple_path(&[
+///     ("mycrate", Namespace::Crate, 0),
+///     ("foo", Namespace::Value, 0),
+/// ]);
+/// let symbol = encode_symbol(&path);
+/// assert_eq!(symbol, "_RNvC7mycrate3foo");
+/// ```
+pub fn encode_symbol(path: &str) -> String {
+    format!("_R{}", path)
+}
 
 /// Push a `_`-terminated base 62 integer, using the format
 /// specified in RFC 2603 as `<base-62-number>`, that is:
