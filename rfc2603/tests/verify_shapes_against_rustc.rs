@@ -69,7 +69,6 @@ fn test_compile_and_verify_shapes() {
     // Create a test file with generic functions
     let test_code = r#"
 #![crate_type = "dylib"]
-#![no_std]
 
 #[no_mangle]
 pub fn test_bool_shape<T>() where T: Sized {
