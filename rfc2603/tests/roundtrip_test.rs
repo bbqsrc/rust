@@ -309,7 +309,6 @@ fn remangle_symbol(parsed: &ParsedSymbol) -> Result<String, String> {
 }
 
 #[test]
-#[ignore] // Requires full demangle-to-structure parser - stretch goal
 fn test_roundtrip_nm_symbols() {
     let lib_path = "/home/user/test-symbols/target/debug/libtest_symbols.so";
 
@@ -424,7 +423,6 @@ fn test_roundtrip_nm_symbols() {
 }
 
 #[test]
-#[ignore] // Requires full demangle-to-structure parser - stretch goal
 fn test_roundtrip_specific_symbols() {
     // Test specific known symbols to ensure they round-trip correctly
     let test_cases = vec![
