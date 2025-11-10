@@ -15,6 +15,7 @@ stele-inventory = { git = "file:///home/user/facet-stele", version = "0.1.0" }
 
 [dev-dependencies]
 rustc-demangle = "0.1"
+tempfile = "3.8"
 
 # This crate is standalone and not part of the rust workspace
 [workspace]
